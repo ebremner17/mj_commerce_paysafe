@@ -1,0 +1,10 @@
+{
+    "name": "ebremner17/mj_commerce_paysafe",
+    "type": "drupal-custom-module",
+    "description": "Provides Commerce integration for PaySafe",
+    "homepage": "https://github.com/ebremner17/mj_commerce_paysafe",
+    "keywords": ["Drupal"],
+    "require": {
+        "drupal/commerce": "~2.0"
+    }
+}

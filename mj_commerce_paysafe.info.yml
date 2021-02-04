@@ -1,0 +1,7 @@
+name: Commerce PaySafe
+type: module
+description: Provides Commerce integration for the PaySafe Gateway.
+core_version_requirement: ^9
+package: Commerce PaySafe
+dependencies:
+  - commerce:commerce_payment
