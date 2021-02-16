@@ -3,6 +3,7 @@
 namespace Drupal\mj_commerce_paysafe\Plugin\Commerce\PaymentGateway;
 
 use Drupal\commerce_order\Entity\OrderInterface;
+use Drupal\commerce_payment\CreditCard;
 use Drupal\commerce_payment\Entity\PaymentInterface;
 use Drupal\commerce_payment\Entity\PaymentMethodInterface;
 use Drupal\commerce_payment\Exception\DeclineException;
@@ -143,10 +144,17 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
   /**
    * {@inheritdoc}
    */
-  public function createPaymentMethod(PaymentMethodInterface $payment_method, array $payment_details)
-  {
-    $test = '';
-    // TODO: Implement createPaymentMethod() method.
+  public function createPaymentMethod(PaymentMethodInterface $payment_method, array $payment_details) {
+
+    // Store the details of the card.
+    $payment_method->card_type = $payment_details['type'];
+    $payment_method->card_number = $payment_details['number'];
+    $payment_method->card_exp_month = $payment_details['expiration']['month'];
+    $payment_method->card_exp_year = $payment_details['expiration']['year'];
+    $payment_method->security_code = $payment_details['security_code'];
+    $expires = CreditCard::calculateExpirationTimestamp($payment_details['expiration']['month'], $payment_details['expiration']['year']);
+    $payment_method->setExpiresTime($expires);
+    $payment_method->save();
   }
 
   /**
@@ -167,32 +175,34 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
       throw new PaymentGatewayException('Count not capture payment. ');
     }
 
-    // Get the amount from the order.
-    $amount = $payment->getAmount()->getNumber();
+    $payment_method = $payment->getPaymentMethod();
 
-    // Get the order id.
-    $order_id = $payment->getOrderId();
+    // Get the card number.
+    $card_number = $payment_method->card_number->getValue()[0]['value'];
+
+    // Get the card expiry information.
+    $card_expire = [
+      'month' => $payment_method->card_exp_month->getValue()[0]['value'],
+      'year' => $payment_method->card_exp_year->getValue()[0]['value'],
+    ];
 
     // Create a new authorization.
     $auth = new Authorization(
       [
         'settleWithAuth' => true,
         'merchantRefNum' => $order_id,
-        'amount' => $amount,
+        'amount' => $payment->getAmount()->getNumber(),
         'card' => [
-          'cardNum' => 4111111111111111,
+          'cardNum' => $payment_method->card_number->getValue()[0]['value'],
           'cvv' => 123,
-          'cardExpiry' => [
-            'month' => 2,
-            'year' => 2027,
-          ],
+          'cardExpiry' => $card_expire,
         ],
         'billingDetails' => [
-          "street" => "100 Queen Street West",
-          "city" => "Toronto",
-          "state" => "ON",
-          "country" => "CA",
-          "zip" => "M5H 2N2",
+          "street" => $billing_address->getAddressLine1(),
+          "city" => $billing_address->getLocality(),
+          "state" => $billing_address->getAdministrativeArea(),
+          "country" => $billing_address->getCountryCode(),
+          "zip" => $billing_address->getPostalCode(),
         ],
       ]
     );
