@@ -7,16 +7,20 @@
  */
 function mj_commerce_paysafe_preprocess_status_messages(&$variables) {
 
-  // Step through each of the error messages and remove Drupal commerce
-  // default mesasges.
-  foreach ($variables['message_list']['error'] as $key => $m) {
+  // Ensure that we have error messages to process.
+  if (isset($variables['message_list']['error']) && count($variables['message_list']['error']) > 0) {
 
-    // If it is a default Drupal commerce error message, remove it.
-    if (
-      $m == 'We encountered an error processing your payment method. Please verify your details and try again.' ||
-      $m == 'We encountered an unexpected error processing your payment method. Please try again later.'
-    ) {
-      unset($variables['message_list']['error'][$key]);
+    // Step through each of the error messages and remove Drupal commerce
+    // default mesasges.
+    foreach ($variables['message_list']['error'] as $key => $m) {
+
+      // If it is a default Drupal commerce error message, remove it.
+      if (
+        $m == 'We encountered an error processing your payment method. Please verify your details and try again.' ||
+        $m == 'We encountered an unexpected error processing your payment method. Please try again later.'
+      ) {
+        unset($variables['message_list']['error'][$key]);
+      }
     }
   }
 }
