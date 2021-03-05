@@ -24,3 +24,15 @@ function mj_commerce_paysafe_preprocess_status_messages(&$variables) {
     }
   }
 }
+
+/**
+ * Implements hook_form_alter().
+ *
+ * Remove option to add new address.
+ */
+function mj_commerce_paysafe_form_commerce_checkout_flow_multistep_default_alter(&$form, \Drupal\Core\Form\FormStateInterface $form_state, $form_id) {
+
+  // Unset adding a new address, users will have to edit their current address.
+  // Just makes things easier.
+  unset($form['payment_information']['add_payment_method']['billing_information']['select_address']['#options']['_new']);
+}

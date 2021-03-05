@@ -180,7 +180,7 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
 
         // Need to setup the merchant id, which is a unique value for this customer.
         // We are going to use mj-<drupal_uid>.
-        $merchant_id = 'mj-testing20-' . \Drupal::currentUser()->id();
+        $merchant_id = 'mj-site-' . \Drupal::currentUser()->id();
 
         // Setup the profile.
         $profile = $client->customerVaultService()->createProfile(
@@ -243,7 +243,49 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
           )
         );
 
-        // TODO: check if addresses are the same and update.
+        // Fields to check for the address.
+        $fields_to_check = [
+          'street' => 'address_line1',
+          'city' => 'locality',
+          'country' => 'country_code',
+          'state' => 'administrative_area',
+          'zip' => 'postal_code',
+        ];
+
+        // Flag to check if we update address.
+        $update_address = FALSE;
+
+        // Step through each field and see if we have to update the
+        // address.
+        foreach ($fields_to_check as $key => $field_to_check) {
+
+          // If the keys are not the same, we need to update the address.
+          if ($address->$key !== $billing_address->$field_to_check) {
+
+            // Set the flag to update the address.
+            $update_address = TRUE;
+
+            // Break out of the loop, since we found a change.
+            break;
+          }
+        }
+
+        // If there is an update to an address, then update it.
+        if ($update_address) {
+
+          // Update all the address fields.
+          $address->nickName = $billing_address->getGivenName() . '-' . $billing_address->getFamilyName();
+          $address->street = $billing_address->getAddressLine1();
+          $address->street2 = $billing_address->getAddressLine2();
+          $address->city = $billing_address->getLocality();
+          $address->country = $billing_address->getCountryCode();
+          $address->state = $billing_address->getAdministrativeArea();
+          $address->zip = $billing_address->getPostalCode();
+          $address->recipientName = $billing_address->getGivenName() . ' ' . $billing_address->getFamilyName();
+
+          // Complete the update to the API.
+          $response = $client->customerVaultService()->updateAddress($address);
+        }
       }
 
       // Setup the new card.
@@ -260,13 +302,6 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
 
       // Perform the card API call.
       $card = $client->customerVaultService()->createCard($card);
-    }
-    else {
-      $profile = $client->customerVaultService()->getProfile(
-        new Profile(
-          ['id' => 'a677c225-e1ef-49a4-90a2-623145542bd7']
-        )
-      );
     }
 
     // Store the details of the card.
@@ -325,8 +360,18 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
       )
     );
 
+    // Get the address from the API.
+    $address = $client->customerVaultService()->getAddress(
+      new Address(
+        [
+          'id' => $address_id,
+          'profileID' => $profile_id,
+        ]
+      )
+    );
+
     // Set the marchant id, which is mj-<order_number>.
-    $merchant_id = 'mj-testing20-' . $payment->getOrderId();
+    $merchant_id = 'mj-site-' . $payment->getOrderId();
 
     // Create a new authorization.
     $auth = new Authorization(
@@ -337,7 +382,13 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
         'card' => array(
           'paymentToken' => $card->paymentToken
         ),
-        "billingAddressId" => $address_id,
+        'billingDetails' => [
+          'street' => $address->street,
+          'city' => $address->city,
+          'state' => $address->state,
+          'country' => $address->country,
+          'zip' => $address->zip,
+        ]
       ]
     );
 
