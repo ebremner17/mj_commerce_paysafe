@@ -14,7 +14,10 @@ use Paysafe\CardPayments\Authorization;
 use Paysafe\PaysafeException;
 use Symfony\Component\HttpFoundation\Request;
 use Paysafe\PaysafeApiClient;
+use Paysafe\CustomerVault\Address;
+use Paysafe\CustomerVault\Card;
 use Paysafe\Environment;
+use Paysafe\CustomerVault\Profile;
 
 /**
  * Provides the Onsite payment gateway for Paysafe.
@@ -146,12 +149,131 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
    */
   public function createPaymentMethod(PaymentMethodInterface $payment_method, array $payment_details) {
 
+    // Setup the API client.
+    $client = new PaysafeApiClient('devcentre322', 'B-qa2-0-53625f86-302c021476f52bdc9deab7aea876bb28762e62f92fc6712d0214736abf501e9675e55940e83ef77f5c304edc7968', Environment::TEST, 89987201);
+
+    // Get the remote id, which is the id from paysafe.
+    $remote_id = $payment_method->getRemoteId();
+
+    // Load in current user.
+    $uid = \Drupal::currentUser()->id();
+
+    // Get the user data service to store stuff in the user data table.
+    $userData = \Drupal::service('user.data');
+
+    // Get the billing address.
+    $billing_address = $payment_method->getBillingProfile()->address->first();
+
+    // If there is no remote id, we need to check if there is a profile
+    // already created and if not then create one, if there is one
+    // then we can use the value in the user field.
+    if (!$remote_id) {
+
+      // Get the profile id from the user data table.
+      $profile_id = $userData->get('mj_commerce_paysafe', $uid, 'profile_id');
+
+      // Get the address id from the user data table.
+      $address_id = $userData->get('mj_commerce_paysafe', $uid, 'address_id');
+
+      // If there is no profile id we have to create one.
+      if (!$profile_id) {
+
+        // Need to setup the merchant id, which is a unique value for this customer.
+        // We are going to use mj-<drupal_uid>.
+        $merchant_id = 'mj-testing20-' . \Drupal::currentUser()->id();
+
+        // Setup the profile.
+        $profile = $client->customerVaultService()->createProfile(
+          new Profile(
+            [
+              "merchantCustomerId" => $merchant_id,
+              "locale" => "en_US",
+              "firstName" => $billing_address->getGivenName(),
+              "lastName" => $billing_address->getFamilyName(),
+              "email" => \Drupal::currentUser()->getEmail(),
+            ]
+          )
+        );
+
+        // Get the profile id of this profile from the API call.
+        $profile_id = $profile->id;
+
+        // Set the profile id in the data user table.
+        $userData->set('mj_commerce_paysafe', $uid, 'profile_id', $profile_id);
+      }
+
+      // Setup the recipient_name which is first_name last_name.
+      $recipient_name = $billing_address->getGivenName() . ' ' . $billing_address->getFamilyName();
+
+      // If there is no address id, then we need to create an address.
+      // If there is an address id, then we need to check that they are
+      // are the same as entered in the form.
+      if (!$address_id) {
+
+        // Setup the address as provided from the form.
+        $address = new Address(
+          [
+            "profileID" => $profile_id,
+            "nickName" => $billing_address->getGivenName() . '-' . $billing_address->getFamilyName(),
+            "street" => $billing_address->getAddressLine1(),
+            "street2" => $billing_address->getAddressLine2(),
+            "city" => $billing_address->getLocality(),
+            "country" => $billing_address->getCountryCode(),
+            "state" => $billing_address->getAdministrativeArea(),
+            "zip" => $billing_address->getPostalCode(),
+            "recipientName" => $billing_address->getGivenName() . ' ' . $billing_address->getFamilyName()
+          ]
+        );
+
+        // Perform the address API call.
+        $address = $client->customerVaultService()->createAddress($address);
+
+        // Set the address id in the data user table.
+        $userData->set('mj_commerce_paysafe', $uid, 'address_id', $address->id);
+      }
+      else {
+
+        // Get the address from the API.
+        $address = $client->customerVaultService()->getAddress(
+          new Address(
+            [
+              'id' => $address_id,
+              'profileID' => $profile_id,
+            ]
+          )
+        );
+
+        // TODO: check if addresses are the same and update.
+      }
+
+      // Setup the new card.
+      $card = new Card(array(
+        "profileID" => $profile_id,
+        "holderName" => $billing_address->getGivenName() . ' ' . $billing_address->getFamilyName(),
+        "cardNum" => $payment_details['number'],
+        "cardExpiry" => [
+          'month' => (int)$payment_details['expiration']['month'],
+          'year' => (int)$payment_details['expiration']['year'],
+        ],
+        "billingAddressId" => $address_id,
+      ));
+
+      // Perform the card API call.
+      $card = $client->customerVaultService()->createCard($card);
+    }
+    else {
+      $profile = $client->customerVaultService()->getProfile(
+        new Profile(
+          ['id' => 'a677c225-e1ef-49a4-90a2-623145542bd7']
+        )
+      );
+    }
+
     // Store the details of the card.
     $payment_method->card_type = $payment_details['type'];
-    $payment_method->card_number = $payment_details['number'];
     $payment_method->card_exp_month = $payment_details['expiration']['month'];
     $payment_method->card_exp_year = $payment_details['expiration']['year'];
-    $payment_method->security_code = $payment_details['security_code'];
+    $payment_method->remote_id = $card->id;
     $expires = CreditCard::calculateExpirationTimestamp($payment_details['expiration']['month'], $payment_details['expiration']['year']);
     $payment_method->setExpiresTime($expires);
     $payment_method->save();
@@ -168,6 +290,18 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
     // Check that the API is online.
     $isOnline = $client->cardPaymentService()->monitor();
 
+    // Load in current user.
+    $uid = \Drupal::currentUser()->id();
+
+    // Get the user data service to store stuff in the user data table.
+    $userData = \Drupal::service('user.data');
+
+    // Get the profile id from the user data table.
+    $profile_id = $userData->get('mj_commerce_paysafe', $uid, 'profile_id');
+
+    // Get the address id from the user data table.
+    $address_id = $userData->get('mj_commerce_paysafe', $uid, 'address_id');
+
     // If the API is offline, set a message and throw an exception.
     if (!$isOnline) {
       $message = $this->t('We apologize but our payment processing is not available at this time, please try again or contact andrea@montgomeryjames.ca for assistance');
@@ -175,35 +309,35 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
       throw new PaymentGatewayException('Count not capture payment. ');
     }
 
+    // Get the info about the payment method.
     $payment_method = $payment->getPaymentMethod();
 
-    // Get the card number.
-    $card_number = $payment_method->card_number->getValue()[0]['value'];
+    // Get the remote id from the payment method.
+    $card_id = $payment_method->getRemoteId();
 
-    // Get the card expiry information.
-    $card_expire = [
-      'month' => $payment_method->card_exp_month->getValue()[0]['value'],
-      'year' => $payment_method->card_exp_year->getValue()[0]['value'],
-    ];
+    // Make the call to the API for the card.
+    $card = $client->customerVaultService()->getCard(
+      new Card(
+        [
+          'id' => $card_id,
+          'profileID' => $profile_id,
+        ]
+      )
+    );
+
+    // Set the marchant id, which is mj-<order_number>.
+    $merchant_id = 'mj-testing20-' . $payment->getOrderId();
 
     // Create a new authorization.
     $auth = new Authorization(
       [
         'settleWithAuth' => true,
-        'merchantRefNum' => $order_id,
+        'merchantRefNum' => $merchant_id,
         'amount' => $payment->getAmount()->getNumber(),
-        'card' => [
-          'cardNum' => $payment_method->card_number->getValue()[0]['value'],
-          'cvv' => 123,
-          'cardExpiry' => $card_expire,
-        ],
-        'billingDetails' => [
-          "street" => $billing_address->getAddressLine1(),
-          "city" => $billing_address->getLocality(),
-          "state" => $billing_address->getAdministrativeArea(),
-          "country" => $billing_address->getCountryCode(),
-          "zip" => $billing_address->getPostalCode(),
-        ],
+        'card' => array(
+          'paymentToken' => $card->paymentToken
+        ),
+        "billingAddressId" => $address_id,
       ]
     );
 
@@ -230,7 +364,7 @@ class PaySafeOnSitePayment extends OnsitePaymentGatewayBase {
         case 'COMPLETED':
           $next_state = $capture ? 'completed' : 'authorization';
           $payment->setState($next_state);
-          $payment->setRemoteId($response->transaction->id);
+          $payment->setRemoteId($response->id);
           $payment->setExpiresTime(strtotime('+5 days'));
           $payment->save();
           break;
